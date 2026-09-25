@@ -1,12 +1,30 @@
 FROM php:8.2-cli
 
-# Install system dependencies and PHP extensions Laravel needs
+# Install system dependencies needed to build PHP extensions
 RUN apt-get update && apt-get install -y \
     git \
     unzip \
     libzip-dev \
     libsqlite3-dev \
-    && docker-php-ext-install pdo pdo_sqlite pdo_mysql zip \
+    libxml2-dev \
+    libpng-dev \
+    libjpeg-dev \
+    libfreetype6-dev \
+    libonig-dev \
+    libicu-dev \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install \
+        pdo \
+        pdo_sqlite \
+        pdo_mysql \
+        zip \
+        gd \
+        xml \
+        dom \
+        simplexml \
+        mbstring \
+        bcmath \
+        intl \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Composer
