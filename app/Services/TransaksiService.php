@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Models\Obat;
 use App\Models\Transaction;
-use App\Models\TransactionReturn;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
@@ -34,10 +33,10 @@ class TransaksiService
         foreach ($transaction->items as $item) {
             $returnedQty = $returnedQtyMap[$item->id] ?? 0;
 
-            $item->qty_return       = $returnedQty;
-            $item->qty_final        = $item->qty - $returnedQty;
-            $item->subtotal_final   = $item->qty_final * $item->harga_jual;
-            $item->subtotal_return  = $returnedQty * $item->harga_jual;
+            $item->qty_return      = $returnedQty;
+            $item->qty_final       = $item->qty - $returnedQty;
+            $item->subtotal_final  = $item->qty_final * $item->harga_jual;
+            $item->subtotal_return = $returnedQty * $item->harga_jual;
         }
 
         $transaction->total_return    = $totalReturn;
@@ -51,21 +50,26 @@ class TransaksiService
     /**
      * Process a multi-item return. Restores stock, records return rows, updates transaction status.
      *
-     * @param  int                $transactionId
-     * @param  array<int, int>    $items   [transaction_item_id => qty_to_return]
-     * @param  string             $reason
-     * @return void
+     * Compatible with both SQLite and MySQL:
+     * - lockForUpdate() is skipped on SQLite (it does not support row-level locking;
+     *   SQLite uses database-level write locking via the transaction itself).
+     *
+     * @param  int              $transactionId
+     * @param  array<int, int>  $items   [transaction_item_id => qty_to_return]
+     * @param  string           $reason
      *
      * @throws \Throwable
      */
     public function processReturn(int $transactionId, array $items, string $reason): void
     {
         DB::transaction(function () use ($transactionId, $items, $reason): void {
+            $isSqlite = DB::getDriverName() === 'sqlite';
+
             /** @var object $transaction */
-            $transaction = DB::table('transaction')
-                ->where('id', $transactionId)
-                ->lockForUpdate()
-                ->first();
+            $transactionQuery = DB::table('transaction')->where('id', $transactionId);
+            $transaction = $isSqlite
+                ? $transactionQuery->first()
+                : $transactionQuery->lockForUpdate()->first();
 
             if (! $transaction || $transaction->status === 'VOID') {
                 throw new \RuntimeException('Transaksi tidak valid atau sudah dibatalkan.');
@@ -80,23 +84,25 @@ class TransaksiService
                 }
 
                 /** @var object $item */
-                $item = DB::table('transactionitem')
+                $itemQuery = DB::table('transactionitem')
                     ->where('id', $itemId)
-                    ->where('transaction_id', $transactionId)
-                    ->lockForUpdate()
-                    ->first();
+                    ->where('transaction_id', $transactionId);
+
+                $item = $isSqlite
+                    ? $itemQuery->first()
+                    : $itemQuery->lockForUpdate()->first();
 
                 if (! $item) {
                     continue;
                 }
 
-                $availableQty = $item->qty - $item->returned_qty;
+                $availableQty = $item->qty - ($item->returned_qty ?? 0);
                 if ($qty > $availableQty) {
                     throw new \RuntimeException("Qty return melebihi jumlah tersedia untuk item #{$itemId}.");
                 }
 
-                $returnAmount  = $item->harga_jual * $qty;
-                $totalReturn  += $returnAmount;
+                $returnAmount = $item->harga_jual * $qty;
+                $totalReturn += $returnAmount;
 
                 // 1. Record the return
                 DB::table('transaction_returns')->insert([
@@ -106,14 +112,14 @@ class TransaksiService
                     'qty'                 => $qty,
                     'amount'              => $returnAmount,
                     'reason'              => $reason,
-                    'created_at'          => now()->timezone('Asia/Jakarta'),
-                    'updated_at'          => now()->timezone('Asia/Jakarta'),
+                    'created_at'          => now()->toDateTimeString(),
+                    'updated_at'          => now()->toDateTimeString(),
                 ]);
 
                 // 2. Update returned_qty on the item
                 DB::table('transactionitem')
                     ->where('id', $item->id)
-                    ->update(['returned_qty' => $item->returned_qty + $qty]);
+                    ->update(['returned_qty' => ($item->returned_qty ?? 0) + $qty]);
 
                 // 3. Restore stock
                 DB::table('obat')
@@ -129,9 +135,9 @@ class TransaksiService
             DB::table('transaction')
                 ->where('id', $transactionId)
                 ->update([
-                    'total_return' => $transaction->total_return + $totalReturn,
+                    'total_return' => ($transaction->total_return ?? 0) + $totalReturn,
                     'status'       => 'RETURN',
-                    'updated_at'   => now()->timezone('Asia/Jakarta'),
+                    'updated_at'   => now()->toDateTimeString(),
                 ]);
         });
     }
@@ -155,7 +161,7 @@ class TransaksiService
                 'status'      => 'VOID',
                 'void_reason' => $voidReason,
                 'void_by'     => Auth::id(),
-                'void_at'     => Carbon::now()->timezone('Asia/Jakarta'),
+                'void_at'     => Carbon::now()->toDateTimeString(),
             ]);
 
             foreach ($trx->items as $item) {

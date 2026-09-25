@@ -30,11 +30,16 @@ class PosController extends Controller
         DB::beginTransaction();
 
         try {
-            $data = $request->validated();
+            $data      = $request->validated();
+            $isSqlite  = DB::getDriverName() === 'sqlite';
+            $nowString = now()->toDateTimeString(); // SQLite-safe datetime string
 
-            // Lock all obat rows first to prevent race conditions
+            // Validate stock availability — use lockForUpdate only on MySQL
             foreach ($data['cart'] as $item) {
-                $obat = Obat::where('id', $item['id'])->lockForUpdate()->first();
+                $obatQuery = Obat::where('id', $item['id']);
+                $obat = $isSqlite
+                    ? $obatQuery->first()
+                    : $obatQuery->lockForUpdate()->first();
 
                 if (! $obat) {
                     throw new \RuntimeException('Obat tidak ditemukan.');
@@ -57,6 +62,7 @@ class PosController extends Controller
             $lastId = Transaction::max('id') + 1;
             $kode   = 'TRX-' . date('Ymd') . '-' . str_pad($lastId, 5, '0', STR_PAD_LEFT);
 
+            // Use plain datetime strings — compatible with both SQLite and MySQL
             $transaksi = Transaction::create([
                 'kode'            => $kode,
                 'total_transaksi' => $data['totalTransaction'],
@@ -64,14 +70,18 @@ class PosController extends Controller
                 'total_kembalian' => $data['totalChange'],
                 'status'          => 'SUCCESS',
                 'user_id'         => Auth::id(),
-                'created_at'      => now()->timezone('Asia/Jakarta'),
-                'updated_at'      => now()->timezone('Asia/Jakarta'),
-                'paid_at'         => now()->timezone('Asia/Jakarta'),
+                'created_at'      => $nowString,
+                'updated_at'      => $nowString,
+                'paid_at'         => $nowString,
             ]);
 
             // Save items and deduct stock
             foreach ($data['cart'] as $item) {
-                $obat = Obat::where('id', $item['id'])->lockForUpdate()->first();
+                $obatQuery = Obat::where('id', $item['id']);
+                $obat = $isSqlite
+                    ? $obatQuery->first()
+                    : $obatQuery->lockForUpdate()->first();
+
                 $obat->decrement('stok', $item['qty']);
 
                 TransactionItem::create([

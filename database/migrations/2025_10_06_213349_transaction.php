@@ -8,6 +8,8 @@ return new class extends Migration
 {
     /**
      * Run the migrations.
+     * Note: enum() compiles to VARCHAR with a CHECK constraint on SQLite,
+     * which works correctly for string comparisons.
      */
     public function up(): void
     {
@@ -17,8 +19,14 @@ return new class extends Migration
             $table->integer('total_transaksi');
             $table->integer('total_dibayar');
             $table->integer('total_kembalian');
+            $table->integer('total_return')->default(0);
             $table->unsignedBigInteger('user_id');
-            $table->enum('status', ['SUCCESS','VOID','REFUND'])->default('SUCCESS');
+            // Using string instead of enum for full SQLite/MySQL compatibility.
+            // Valid values: 'SUCCESS', 'VOID', 'RETURN'
+            $table->string('status', 20)->default('SUCCESS');
+            $table->string('void_reason')->nullable();
+            $table->unsignedBigInteger('void_by')->nullable();
+            $table->timestamp('void_at')->nullable();
             $table->timestamp('paid_at')->nullable()->useCurrent();
             $table->timestamps();
 

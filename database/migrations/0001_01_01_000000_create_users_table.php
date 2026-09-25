@@ -8,6 +8,7 @@ return new class extends Migration
 {
     /**
      * Run the migrations.
+     * Note: enum() compiles to VARCHAR with a CHECK constraint on SQLite.
      */
     public function up(): void
     {
@@ -16,7 +17,9 @@ return new class extends Migration
             $table->string('nama', 100);
             $table->string('username', 50)->unique();
             $table->string('password', 255);
-            $table->enum('role', ['admin','kasir'])->default('kasir');
+            // Using string instead of enum for full SQLite/MySQL compatibility.
+            // Valid values: 'admin', 'kasir'
+            $table->string('role', 20)->default('kasir');
             $table->timestamps();
         });
 

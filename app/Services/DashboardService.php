@@ -13,6 +13,18 @@ use Illuminate\Support\Facades\DB;
 class DashboardService
 {
     /**
+     * Returns the database-agnostic SQL expression for formatting a datetime column
+     * to 'YYYY-MM'. Supports SQLite and MySQL automatically.
+     */
+    private function monthFormatExpr(string $column): string
+    {
+        return match (DB::getDriverName()) {
+            'sqlite' => "strftime('%Y-%m', {$column})",
+            default  => "DATE_FORMAT({$column}, '%Y-%m')",
+        };
+    }
+
+    /**
      * Build chart data for the last 6 months (penjualan, modal, keuntungan).
      *
      * @param  Builder $baseQuery  A pre-configured TransactionItem query builder (cloned internally)
@@ -27,45 +39,48 @@ class DashboardService
      */
     public function getChartData(Builder $baseQuery): array
     {
-        $sixMonthsAgo = Carbon::now()->subMonths(6);
+        $sixMonthsAgo    = Carbon::now()->subMonths(6)->startOfMonth();
+        $monthFormatExpr = $this->monthFormatExpr('"transaction"."created_at"');
 
-        $penjualan = (clone $baseQuery)
+        // Build a dedicated sub-query WITHOUT the outer orderBy(created_at) that
+        // conflicts with GROUP BY in SQLite. The clone carries any pre-set joins/wheres,
+        // but we strip ordering and add our own.
+        $makeQuery = function () use ($baseQuery, $monthFormatExpr, $sixMonthsAgo) {
+            return (clone $baseQuery)
+                ->reorder() // Remove the orderBy('transaction.created_at') from baseQuery
+                ->where('transaction.created_at', '>=', $sixMonthsAgo->toDateTimeString())
+                ->groupBy(DB::raw($monthFormatExpr))
+                ->orderBy(DB::raw($monthFormatExpr), 'asc');
+        };
+
+        $penjualan = $makeQuery()
             ->select(
-                DB::raw("DATE_FORMAT(transaction.created_at, '%Y-%m') as bulan"),
-                DB::raw('SUM(transactionitem.subtotal) as total')
+                DB::raw("{$monthFormatExpr} as bulan"),
+                DB::raw('SUM("transactionitem"."subtotal") as total')
             )
-            ->where('transaction.created_at', '>=', $sixMonthsAgo)
-            ->groupBy('bulan')
-            ->orderBy('bulan', 'asc')
             ->get();
 
-        $modal = (clone $baseQuery)
+        $modal = $makeQuery()
             ->select(
-                DB::raw("DATE_FORMAT(transaction.created_at, '%Y-%m') as bulan"),
-                DB::raw('SUM(transactionitem.harga_modal * transactionitem.qty) AS total')
+                DB::raw("{$monthFormatExpr} as bulan"),
+                DB::raw('SUM("transactionitem"."harga_modal" * "transactionitem"."qty") AS total')
             )
-            ->where('transaction.created_at', '>=', $sixMonthsAgo)
-            ->groupBy('bulan')
-            ->orderBy('bulan', 'asc')
             ->get();
 
-        $keuntungan = (clone $baseQuery)
+        $keuntungan = $makeQuery()
             ->select(
-                DB::raw("DATE_FORMAT(transaction.created_at, '%Y-%m') as bulan"),
-                DB::raw('SUM((transactionitem.harga_jual - transactionitem.harga_modal) * transactionitem.qty) AS total')
+                DB::raw("{$monthFormatExpr} as bulan"),
+                DB::raw('SUM(("transactionitem"."harga_jual" - "transactionitem"."harga_modal") * "transactionitem"."qty") AS total')
             )
-            ->where('transaction.created_at', '>=', $sixMonthsAgo)
-            ->groupBy('bulan')
-            ->orderBy('bulan', 'asc')
             ->get();
 
         return [
-            'penjualanLabels'   => $penjualan->pluck('bulan'),
-            'penjualanTotals'   => $penjualan->pluck('total'),
-            'modalLabels'       => $modal->pluck('bulan'),
-            'modalTotals'       => $modal->pluck('total'),
-            'keuntunganLabels'  => $keuntungan->pluck('bulan'),
-            'keuntunganTotals'  => $keuntungan->pluck('total'),
+            'penjualanLabels'  => $penjualan->pluck('bulan'),
+            'penjualanTotals'  => $penjualan->pluck('total'),
+            'modalLabels'      => $modal->pluck('bulan'),
+            'modalTotals'      => $modal->pluck('total'),
+            'keuntunganLabels' => $keuntungan->pluck('bulan'),
+            'keuntunganTotals' => $keuntungan->pluck('total'),
         ];
     }
 
@@ -97,7 +112,7 @@ class DashboardService
         $kenaikanUser = max(0, $totalUserThisMonth - $totalUserLastMonth);
 
         // Top 4 obat by lowest stock (for overview widget)
-        $allObats     = Obat::select(['nama', 'stok'])->get();
+        $allObats      = Obat::select(['nama', 'stok'])->get();
         $totalStokObat = $allObats->sum('stok');
         $listStokObat  = $allObats->sortBy('stok')->take(4);
 
@@ -112,20 +127,26 @@ class DashboardService
     /**
      * Build full transaction statistics (today, this month, last month, totals).
      *
+     * All aggregates use Eloquent's whereDate/whereBetween/sum which produce
+     * database-agnostic SQL and correct parameter binding.
+     *
      * @param  Builder $baseQuery  A pre-configured TransactionItem query builder (cloned internally)
      * @return array<string, mixed>
      */
     public function getTransaksiData(Builder $baseQuery): array
     {
-        $today     = Carbon::today();
-        $yesterday = Carbon::yesterday();
+        $today     = Carbon::today()->toDateString();
+        $yesterday = Carbon::yesterday()->toDateString();
 
-        $startThisMonth = Carbon::now()->startOfMonth();
-        $endThisMonth   = Carbon::now()->endOfMonth();
-        $startLastMonth = Carbon::now()->subMonth()->startOfMonth();
-        $endLastMonth   = Carbon::now()->subMonth()->endOfMonth();
+        $startThisMonth = Carbon::now()->startOfMonth()->toDateTimeString();
+        $endThisMonth   = Carbon::now()->endOfMonth()->toDateTimeString();
+        $startLastMonth = Carbon::now()->subMonth()->startOfMonth()->toDateTimeString();
+        $endLastMonth   = Carbon::now()->subMonth()->endOfMonth()->toDateTimeString();
 
-        // --- Scalar aggregates (efficient, DB-level) ---
+        // Aggregate column expressions (safe for both MySQL and SQLite)
+        $modalExpr = DB::raw('"transactionitem"."harga_modal" * "transactionitem"."qty"');
+
+        // --- Scalar aggregates (DB-level, parameter-bound) ---
         $penjualanHariIni = (clone $baseQuery)
             ->whereDate('transaction.created_at', $today)
             ->sum('transactionitem.subtotal');
@@ -136,27 +157,44 @@ class DashboardService
 
         $totalObatTerjual = (clone $baseQuery)->sum('transactionitem.qty');
 
-        $totalModal    = (clone $baseQuery)->sum(DB::raw('transactionitem.harga_modal * transactionitem.qty'));
+        $totalModal     = (clone $baseQuery)->sum($modalExpr);
         $totalPenjualan = (clone $baseQuery)->sum('transactionitem.subtotal');
         $totalKeuntungan = $totalPenjualan - $totalModal;
 
-        $totalModalHariIni    = (clone $baseQuery)->whereDate('transaction.created_at', $today)->sum(DB::raw('transactionitem.harga_modal * transactionitem.qty'));
-        $totalModalBulanIni   = (clone $baseQuery)->whereBetween('transaction.created_at', [$startThisMonth, $endThisMonth])->sum(DB::raw('transactionitem.harga_modal * transactionitem.qty'));
-        $totalPenjualanBulanIni = (clone $baseQuery)->whereBetween('transaction.created_at', [$startThisMonth, $endThisMonth])->sum('transactionitem.subtotal');
+        $totalModalHariIni = (clone $baseQuery)
+            ->whereDate('transaction.created_at', $today)
+            ->sum($modalExpr);
+
+        $totalModalBulanIni = (clone $baseQuery)
+            ->whereBetween('transaction.created_at', [$startThisMonth, $endThisMonth])
+            ->sum($modalExpr);
+
+        $totalPenjualanBulanIni = (clone $baseQuery)
+            ->whereBetween('transaction.created_at', [$startThisMonth, $endThisMonth])
+            ->sum('transactionitem.subtotal');
+
         $totalKeuntunganBulanIni = $totalPenjualanBulanIni - $totalModalBulanIni;
 
-        $totalModalBulanLalu    = (clone $baseQuery)->whereBetween('transaction.created_at', [$startLastMonth, $endLastMonth])->sum(DB::raw('transactionitem.harga_modal * transactionitem.qty'));
-        $totalPenjualanBulanLalu = (clone $baseQuery)->whereBetween('transaction.created_at', [$startLastMonth, $endLastMonth])->sum('transactionitem.subtotal');
+        $totalModalBulanLalu = (clone $baseQuery)
+            ->whereBetween('transaction.created_at', [$startLastMonth, $endLastMonth])
+            ->sum($modalExpr);
+
+        $totalPenjualanBulanLalu = (clone $baseQuery)
+            ->whereBetween('transaction.created_at', [$startLastMonth, $endLastMonth])
+            ->sum('transactionitem.subtotal');
+
         $totalKeuntunganBulanLalu = $totalPenjualanBulanLalu - $totalModalBulanLalu;
 
         $totalKeuntunganHariIni = $penjualanHariIni - $totalModalHariIni;
 
-        // Per-obat modal breakdown (for detailed table)
+        // Per-obat modal breakdown (for detailed table).
+        // Uses reorder() to strip the inherited orderBy which conflicts with GROUP BY in SQLite.
         $totalModalPerObat = (clone $baseQuery)
+            ->reorder()
             ->select(
                 'transactionitem.obat_id',
-                DB::raw('SUM(transactionitem.harga_modal * transactionitem.qty) as total_modal_per_obat'),
-                DB::raw('SUM(transactionitem.subtotal) as total_penjualan_per_obat')
+                DB::raw('SUM("transactionitem"."harga_modal" * "transactionitem"."qty") as total_modal_per_obat'),
+                DB::raw('SUM("transactionitem"."subtotal") as total_penjualan_per_obat')
             )
             ->groupBy('transactionitem.obat_id')
             ->with('obat')
@@ -165,31 +203,31 @@ class DashboardService
         // Sales growth percentage
         $kenaikanPenjualan = $this->calculateGrowthPercentage($penjualanHariIni, $penjualanKemarin);
 
-        // Recent 3 transactions
+        // Recent 3 transaction items
         $recentTransaksi = (clone $baseQuery)->take(3)->get();
 
         $totalTransaksi = (clone $baseQuery)->count();
         $days = min($totalTransaksi, 7);
 
         return [
-            'transaksi'               => $recentTransaksi,
-            'penjualanHariIni'        => $penjualanHariIni,
-            'kenaikanPenjualan'       => $kenaikanPenjualan,
-            'totalObatTerjual'        => $totalObatTerjual,
-            'totalModal'              => $totalModal,
-            'totalPenjualan'          => $totalPenjualan,
-            'totalKeuntungan'         => $totalKeuntungan,
-            'totalModalBulanIni'      => $totalModalBulanIni,
-            'totalPenjualanBulanIni'  => $totalPenjualanBulanIni,
-            'totalKeuntunganBulanIni' => $totalKeuntunganBulanIni,
-            'totalModalBulanLalu'     => $totalModalBulanLalu,
-            'totalPenjualanBulanLalu' => $totalPenjualanBulanLalu,
+            'transaksi'                => $recentTransaksi,
+            'penjualanHariIni'         => $penjualanHariIni,
+            'kenaikanPenjualan'        => $kenaikanPenjualan,
+            'totalObatTerjual'         => $totalObatTerjual,
+            'totalModal'               => $totalModal,
+            'totalPenjualan'           => $totalPenjualan,
+            'totalKeuntungan'          => $totalKeuntungan,
+            'totalModalBulanIni'       => $totalModalBulanIni,
+            'totalPenjualanBulanIni'   => $totalPenjualanBulanIni,
+            'totalKeuntunganBulanIni'  => $totalKeuntunganBulanIni,
+            'totalModalBulanLalu'      => $totalModalBulanLalu,
+            'totalPenjualanBulanLalu'  => $totalPenjualanBulanLalu,
             'totalKeuntunganBulanLalu' => $totalKeuntunganBulanLalu,
-            'totalModalPerObat'       => $totalModalPerObat,
-            'totalTransaksi'          => $totalTransaksi,
-            'days'                    => $days,
-            'totalKeuntunganHariIni'  => $totalKeuntunganHariIni,
-            'totalModalHariIni'       => $totalModalHariIni,
+            'totalModalPerObat'        => $totalModalPerObat,
+            'totalTransaksi'           => $totalTransaksi,
+            'days'                     => $days,
+            'totalKeuntunganHariIni'   => $totalKeuntunganHariIni,
+            'totalModalHariIni'        => $totalModalHariIni,
         ];
     }
 

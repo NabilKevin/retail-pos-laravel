@@ -27,10 +27,12 @@ class DashboardController extends Controller
         $totalExpiredH30 = Obat::expiringSoon(30)->where('expired_at', '>', $today->addDays(7))->count();
 
         // --- Transaction item base query ---
+        // NOTE: Do NOT add orderBy here — it is inherited by every clone() inside
+        // DashboardService. GROUP BY chart queries use reorder() to strip it, but
+        // having it here causes SQLite errors. The recent-items slice handles its own ordering.
         $baseQuery = TransactionItem::select('transactionitem.*')
             ->join('transaction', 'transactionitem.transaction_id', '=', 'transaction.id')
             ->where('transaction.status', '!=', 'VOID')
-            ->orderBy('transaction.created_at', 'desc')
             ->with(['obat', 'transaction']);
 
         $dataTransaksi = $this->dashboardService->getTransaksiData($baseQuery);

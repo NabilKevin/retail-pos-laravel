@@ -157,17 +157,17 @@
                                 <td class="px-4 py-3 text-center">
                                     <span
                                         class="px-3 py-1 rounded-full text-xs font-medium
-    @switch($trx->status)
-        @case('SUCCESS')
-            bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400
-            @break
-        @case('VOID')
-            bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400
-            @break
-        @case('RETURN')
-            bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-400
-            @break
-    @endswitch
+                                          @switch($trx->status)
+                                              @case('SUCCESS')
+                                                  bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400
+                                                  @break
+                                              @case('VOID')
+                                                  bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400
+                                                  @break
+                                              @case('RETURN')
+                                                  bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-400
+                                                  @break
+                                          @endswitch
 ">
                                         {{ $trx->status }}
                                     </span>

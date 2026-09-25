@@ -19,6 +19,8 @@ return new class extends Migration
             $table->integer('harga_jual');
             $table->integer('qty');
             $table->bigInteger('subtotal');
+            // Tracks how many units of this item have been returned.
+            $table->integer('returned_qty')->default(0);
             $table->timestamps();
 
             $table->foreign('obat_id')->references('id')->on('obat')->onDelete('restrict');
