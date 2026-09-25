@@ -155,7 +155,7 @@
 
                             {{-- WAKTU --}}
                             <td class="hidden lg:table-cell text-center px-3 py-2">
-                                {{ $transaksi->created_at }}
+                                {{ $transaksi->created_at?->format('d/m/Y H:i') ?? '-' }}
                             </td>
 
                             {{-- AKSI --}}
