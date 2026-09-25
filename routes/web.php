@@ -68,25 +68,24 @@ Route::middleware('auth:sanctum')->group(function (): void {
     // -------------------------------------------------------
     // Kasir routes
     // -------------------------------------------------------
-    Route::middleware('kasir')->prefix('kasir')->group(function (): void {
-
-        // Dashboard (kasir root)
-        Route::get('/', [KasirDashboard::class, 'index'])->name('kasir.dashboard');
-
-        // POS
-        Route::get('/pos', [PosController::class, 'index'])->name('kasir.pos');
-        Route::post('/pos', [PosController::class, 'bayar'])->name('kasir.pos.store');
-        Route::get('/struk/{kode}', [PosController::class, 'cetakStruk'])->name('kasir.cetak.struk');
-
-        // Obat (read-only for kasir)
-        Route::get('/obat', [KasirObat::class, 'index'])->name('kasir.obat');
-        Route::get('/obat/search', [KasirObat::class, 'search'])->name('kasir.obat.search');
-
-        // Transaksi
-        Route::get('/transaksi', [KasirTransaksi::class, 'index'])->name('kasir.transaksi');
-        Route::get('/transaksi/profit', [KasirTransaksi::class, 'profit'])->name('kasir.transaksi.profit');
-        Route::get('/transaksi/export', [KasirTransaksi::class, 'exportExcel'])->name('kasir.transaksi.export');
-        Route::post('/transaksi/{id}/void', [KasirTransaksi::class, 'void'])->name('kasir.transaksi.void');
-        Route::post('/transaksi/{transaction}/return', [KasirTransaksi::class, 'processReturn'])->name('kasir.transaksi.return');
+    Route::middleware('kasir')->group(function (): void {
+      // Dashboard (kasir root)
+      Route::get('/', [KasirDashboard::class, 'index'])->name('kasir.dashboard');
+  
+      // POS
+      Route::get('/pos', [PosController::class, 'index'])->name('kasir.pos');
+      Route::post('/pos', [PosController::class, 'bayar'])->name('kasir.pos.store');
+      Route::get('/struk/{kode}', [PosController::class, 'cetakStruk'])->name('kasir.cetak.struk');
+  
+      // Obat (read-only for kasir)
+      Route::get('/obat', [KasirObat::class, 'index'])->name('kasir.obat');
+      Route::get('/obat/search', [KasirObat::class, 'search'])->name('kasir.obat.search');
+  
+      // Transaksi
+      Route::get('/transaksi', [KasirTransaksi::class, 'index'])->name('kasir.transaksi');
+      Route::get('/transaksi/profit', [KasirTransaksi::class, 'profit'])->name('kasir.transaksi.profit');
+      Route::get('/transaksi/export', [KasirTransaksi::class, 'exportExcel'])->name('kasir.transaksi.export');
+      Route::post('/transaksi/{id}/void', [KasirTransaksi::class, 'void'])->name('kasir.transaksi.void');
+      Route::post('/transaksi/{transaction}/return', [KasirTransaksi::class, 'processReturn'])->name('kasir.transaksi.return');
     });
 });

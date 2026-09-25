@@ -24,7 +24,7 @@ class AuthController extends Controller
 
         $request->session()->regenerate();
 
-        $redirectTo = Auth::user()->role === 'admin' ? '/admin' : '/kasir';
+        $redirectTo = Auth::user()->role === 'admin' ? '/admin' : '/';
 
         return redirect($redirectTo);
     }
